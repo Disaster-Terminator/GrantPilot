@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="popup.css">
+    <title>GrantPilot</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>GrantPilot</h1>
+        <span id="status" class="status">Loading</span>
+      </header>
+
+      <label class="row">
+        <span>
+          <strong>Enabled</strong>
+          <small>只在 ChatGPT 页面点击确认卡片</small>
+        </span>
+        <input id="enabled" type="checkbox">
+      </label>
+
+      <label class="row">
+        <span>
+          <strong>Auto refresh</strong>
+          <small>空闲时按间隔刷新页面</small>
+        </span>
+        <input id="autoRefresh" type="checkbox">
+      </label>
+
+      <label class="field">
+        <span>Refresh interval</span>
+        <select id="refreshIntervalMs">
+          <option value="60000">1 min</option>
+          <option value="300000">5 min</option>
+          <option value="600000">10 min</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>
+          <strong>Local JSONL log</strong>
+          <small>需要先运行 debug log server</small>
+        </span>
+        <input id="logToLocalServer" type="checkbox">
+      </label>
+
+      <section class="panel">
+        <h2>Last issue</h2>
+        <p id="lastIssue">None</p>
+      </section>
+
+      <section class="panel">
+        <h2>Recent events</h2>
+        <ol id="events"></ol>
+      </section>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
