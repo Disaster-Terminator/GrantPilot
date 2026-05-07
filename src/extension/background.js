@@ -1,7 +1,6 @@
 const DEFAULT_SETTINGS = {
   enabled: false,
   autoRefresh: false,
-  refreshIntervalMs: 300000,
   scanIntervalMs: 1000,
   stuckThresholdMs: 120000,
   logToLocalServer: false,
@@ -77,9 +76,6 @@ function sanitizeSettingsPatch(patch) {
   if (typeof patch.enabled === "boolean") sanitized.enabled = patch.enabled;
   if (typeof patch.autoRefresh === "boolean") sanitized.autoRefresh = patch.autoRefresh;
   if (typeof patch.logToLocalServer === "boolean") sanitized.logToLocalServer = patch.logToLocalServer;
-  if (typeof patch.refreshIntervalMs === "number") {
-    sanitized.refreshIntervalMs = clamp(patch.refreshIntervalMs, 30000, 1800000);
-  }
   if (typeof patch.scanIntervalMs === "number") {
     sanitized.scanIntervalMs = clamp(patch.scanIntervalMs, 500, 10000);
   }

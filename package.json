@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/extension/background.js && node --check src/extension/content-script.js && node --check src/extension/popup.js && node --check src/shared/matcher.js && node --check src/shared/text.js && node -e \"JSON.parse(require('node:fs').readFileSync('src/extension/manifest.json','utf8'))\"",
+    "check": "node --check src/extension/background.js && node --check src/extension/content-script.js && node --check src/extension/popup.js && node --check src/shared/matcher.js && node --check src/shared/page-policy.js && node --check src/shared/text.js && node -e \"JSON.parse(require('node:fs').readFileSync('src/extension/manifest.json','utf8'))\"",
     "debug:log-server": "node scripts/debug-log-server.mjs"
   }
 }

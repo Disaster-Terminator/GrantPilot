@@ -2,15 +2,15 @@
   const DEFAULT_SETTINGS = {
     enabled: false,
     autoRefresh: false,
-    refreshIntervalMs: 300000,
     scanIntervalMs: 1000,
     stuckThresholdMs: 120000
   };
 
-  const POSITIVE = ["确认", "允许", "批准", "继续", "Confirm", "Allow", "Approve", "Continue"];
-  const NEGATIVE = ["拒绝", "取消", "Deny", "Reject", "Cancel"];
+  const REFRESH_INTERVAL_SEQUENCE_MS = [10000, 15000, 30000, 60000, 120000, 300000];
+  const POSITIVE = ["\u786e\u8ba4", "\u5141\u8bb8", "\u6279\u51c6", "\u7ee7\u7eed", "Confirm", "Allow", "Approve", "Continue"];
+  const NEGATIVE = ["\u62d2\u7edd", "\u53d6\u6d88", "Deny", "Reject", "Cancel"];
   const CONTEXT = [
-    "使用工具存在风险",
+    "\u4f7f\u7528\u5de5\u5177\u5b58\u5728\u98ce\u9669",
     "Received app response",
     "app response",
     "GitHub",
@@ -18,9 +18,9 @@
     "connector",
     "app",
     "MCP",
-    "工具",
-    "连接器",
-    "应用"
+    "\u5de5\u5177",
+    "\u8fde\u63a5\u5668",
+    "\u5e94\u7528"
   ];
   const ERRORS = [
     "Something went wrong",
@@ -29,27 +29,34 @@
     "Unable to generate",
     "Network error",
     "message stream interrupted",
-    "出了点问题",
-    "发生错误",
-    "网络错误",
-    "无法生成"
+    "\u51fa\u4e86\u70b9\u95ee\u9898",
+    "\u53d1\u751f\u9519\u8bef",
+    "\u7f51\u7edc\u9519\u8bef",
+    "\u65e0\u6cd5\u751f\u6210"
   ];
   const MOJIBAKE = new Map([
-    ["纭", "确认"],
-    ["鎷掔粷", "拒绝"],
-    ["鍙栨秷", "取消"],
-    ["鍏佽", "允许"],
-    ["鎵瑰噯", "批准"],
-    ["缁х画", "继续"]
+    ["\u7ea4\ue758\u559b\u9853?", "\u786e\u8ba4"],
+    ["\u95b9\u950b\u5e1e\u7eee?", "\u62d2\u7edd"],
+    ["\u95b8\u6b04\u7257\u7ec9?", "\u53d6\u6d88"],
+    ["\u95b8\u5fd0\u4d47\u9854?", "\u5141\u8bb8"],
+    ["\u95b9\u7535\u61d3\u9363?", "\u6279\u51c6"],
+    ["\u7f02\u4f48\u5470\u657e", "\u7ee7\u7eed"],
+    ["\u7ea4\u786e\u8ba4", "\u786e\u8ba4"],
+    ["\u7ebe\u786e\u8ba4", "\u786e\u8ba4"]
   ]);
 
   let settings = { ...DEFAULT_SETTINGS };
   let scanTimer = null;
   let observer = null;
   let lastClickedAt = 0;
-  let lastReloadAt = Date.now();
+  let lastActivityAt = Date.now();
+  let refreshCount = readRefreshCount();
   let generationStartedAt = null;
   let lastIssueKey = null;
+  let lastUrl = location.href;
+
+  window.addEventListener("pointerdown", () => markActivity(), { passive: true, capture: true });
+  window.addEventListener("keydown", () => markActivity(), { passive: true, capture: true });
 
   void start();
 
@@ -104,6 +111,12 @@
     }
 
     try {
+      syncUrlState();
+      if (!classifyChatGptPage(location.href).supported) {
+        hideIssue();
+        return;
+      }
+
       const target = findApprovalTarget();
       const pageState = classifyPageState();
 
@@ -118,6 +131,7 @@
         const now = Date.now();
         if (now - lastClickedAt > 1500) {
           lastClickedAt = now;
+          markActivity();
           target.button.click();
           await report("approval_clicked", {
             source,
@@ -128,7 +142,7 @@
         return;
       }
 
-      maybeAutoRefresh(pageState);
+      maybeAutoRefresh(pageState, Boolean(target));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showIssue(message);
@@ -218,7 +232,7 @@
       document.querySelector('button[data-testid="stop-generating-button"]') ||
       document.querySelector('button[aria-label*="Stop"]') ||
       document.querySelector('button[aria-label*="Cancel"]') ||
-      document.querySelector('button[aria-label*="停止"]')
+      document.querySelector('button[aria-label*="\u505c\u6b62"]')
     );
 
     if (!hasStopButton) {
@@ -227,6 +241,7 @@
     }
 
     generationStartedAt ??= Date.now();
+    markActivity(false);
     if (Date.now() - generationStartedAt >= settings.stuckThresholdMs) {
       return {
         status: "stuck_generation",
@@ -237,24 +252,28 @@
     return { status: "generating", reason: "generation control visible" };
   }
 
-  function maybeAutoRefresh(pageState) {
-    if (
-      !settings.autoRefresh ||
-      pageState.status === "generating" ||
-      pageState.status === "chatgpt_error"
-    ) {
+  function maybeAutoRefresh(pageState, hasApprovalTarget) {
+    const decision = shouldRefreshNow({
+      enabled: settings.enabled,
+      autoRefresh: settings.autoRefresh,
+      url: location.href,
+      pageStatus: pageState.status,
+      hasApprovalTarget,
+      refreshCount,
+      now: Date.now(),
+      lastActivityAt
+    });
+
+    if (!decision.refresh) {
       return;
     }
 
-    const now = Date.now();
-    if (now - lastReloadAt < settings.refreshIntervalMs) {
-      return;
-    }
-
-    lastReloadAt = now;
+    refreshCount += 1;
+    writeRefreshCount(refreshCount);
     void report("page_refresh", {
-      reason: pageState.status,
-      intervalMs: settings.refreshIntervalMs
+      reason: decision.reason,
+      intervalMs: decision.intervalMs,
+      refreshCount
     });
     window.location.reload();
   }
@@ -271,6 +290,89 @@
       type: "GRANTPILOT_EVENT",
       event: { kind, detail }
     });
+  }
+
+  function shouldRefreshNow(input) {
+    if (!input.enabled || !input.autoRefresh) {
+      return { refresh: false, reason: "disabled" };
+    }
+
+    const page = classifyChatGptPage(input.url);
+    if (!page.supported) {
+      return { refresh: false, reason: page.reason };
+    }
+
+    if (input.hasApprovalTarget) {
+      return { refresh: false, reason: "approval_target_present" };
+    }
+
+    if (input.pageStatus === "generating" || input.pageStatus === "chatgpt_error") {
+      return { refresh: false, reason: input.pageStatus };
+    }
+
+    const intervalMs = getRefreshIntervalMs(input.refreshCount);
+    const elapsedMs = Math.max(0, Number(input.now) - Number(input.lastActivityAt));
+    if (elapsedMs < intervalMs) {
+      return { refresh: false, reason: "waiting", intervalMs };
+    }
+
+    return { refresh: true, reason: input.pageStatus || "idle", intervalMs };
+  }
+
+  function classifyChatGptPage(urlValue) {
+    let url;
+    try {
+      url = new URL(urlValue);
+    } catch {
+      return { supported: false, reason: "invalid_url" };
+    }
+
+    if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") {
+      return { supported: false, reason: "unsupported_host" };
+    }
+
+    const path = url.pathname.replace(/\/+$/, "");
+    if (/^\/c\/[^/]+$/.test(path) || /^\/g\/[^/]+\/c\/[^/]+$/.test(path)) {
+      return { supported: true, reason: "conversation" };
+    }
+
+    return { supported: false, reason: "not_conversation_page" };
+  }
+
+  function getRefreshIntervalMs(count) {
+    const index = Math.max(0, Math.min(Number(count) || 0, REFRESH_INTERVAL_SEQUENCE_MS.length - 1));
+    return REFRESH_INTERVAL_SEQUENCE_MS[index];
+  }
+
+  function markActivity(resetBackoff = true) {
+    lastActivityAt = Date.now();
+    if (resetBackoff) {
+      refreshCount = 0;
+      writeRefreshCount(refreshCount);
+    }
+  }
+
+  function syncUrlState() {
+    if (lastUrl === location.href) {
+      return;
+    }
+    lastUrl = location.href;
+    lastActivityAt = Date.now();
+    refreshCount = readRefreshCount();
+    generationStartedAt = null;
+    lastIssueKey = null;
+  }
+
+  function readRefreshCount() {
+    return Number(sessionStorage.getItem(refreshCountKey()) || "0") || 0;
+  }
+
+  function writeRefreshCount(value) {
+    sessionStorage.setItem(refreshCountKey(), String(value));
+  }
+
+  function refreshCountKey() {
+    return `grantpilot.refreshCount:${location.origin}${location.pathname}`;
   }
 
   function showIssue(message) {

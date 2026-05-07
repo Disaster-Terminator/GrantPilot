@@ -98,6 +98,10 @@ select {
   color: #f2b8b5;
 }
 
+.hint {
+  color: #aaa;
+}
+
 ol {
   max-height: 170px;
   overflow: auto;
