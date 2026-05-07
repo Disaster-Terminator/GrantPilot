@@ -35,12 +35,13 @@ GrantPilot 不是通用 auto-clicker。
 - 识别 `拒绝`、`取消`、`Deny`、`Reject`、`Cancel` 等负向按钮，但只把它们当作安全边界，永不点击。
 - 点击前要求按钮附近存在工具、应用、连接器、MCP 或 ChatGPT app response 相关上下文。
 - ChatGPT 页面出现可见错误时，会同步显示到扩展弹窗和页面右下角提示条。
-- 可选自动刷新只作用于会话页，并且只在没有授权卡片、没有 ChatGPT 可见错误、没有生成中控制按钮时触发。
+- 可选自动刷新只作用于当前会话页，并且只作为卡死恢复机制触发。
 - 自动刷新使用用户选择的固定基础间隔，并加入随机抖动，避免机械固定节奏：
   - Fast：约 10s
   - Normal：约 20s
   - Relaxed：约 30s
-- 自动刷新只会在观察到会话活动后 armed；单纯打开一个静止会话页不会启动刷新。
+- 自动刷新只会在点击确认或检测到生成中后 armed；正常生成结束会 disarm，单纯打开一个静止会话页不会启动刷新。
+- 弹窗设置按当前 tab / 当前会话页保存，不会继承到其他 ChatGPT 页面。
 
 ## 本地安装
 
@@ -52,8 +53,8 @@ GrantPilot 不是通用 auto-clicker。
 
 ## 弹窗功能
 
-- **Enabled**：开启或关闭授权卡片扫描。
-- **Auto refresh**：在会话页空闲时按退避间隔刷新。
+- **Enabled**：只为当前会话 tab 开启或关闭授权卡片扫描。
+- **Auto refresh**：只为当前会话 tab 开启卡死恢复刷新。
 - **Refresh cadence**：选择自动刷新基础间隔：约 10s、20s 或 30s。实际刷新会加入随机抖动。
 - **Local JSONL log**：把事件写入本地调试日志服务。
 - **Last issue / Recent events**：查看最近一次问题、点击、刷新和运行时事件。
@@ -87,7 +88,8 @@ ChatGPT Web 的真实页面自动化不稳定，这个仓库不把完整 e2e 自
 - 开启状态：展示类似 `Update README.md in GitHub repository?` 的卡片，确认右侧 `确认` / `Allow` 被点击。
 - 安全边界：确认左侧 `拒绝` / `Cancel` 不会被点击。
 - 页面隔离：在 `https://chatgpt.com/` 首页启用 auto-refresh，确认不会记录 `page_refresh`。
-- 自动刷新：在会话页启用 auto-refresh，分别选择 10s / 20s / 30s，确认只有观察到会话活动后才 armed，并按基础间隔加随机抖动刷新。
+- 自动刷新：在会话页启用 auto-refresh，分别选择 10s / 20s / 30s，确认只有确认点击或生成中才 armed；正常回复完成后不会刷新。
+- 作用域：在一个 ChatGPT 会话页开启 GrantPilot 后，切到另一个会话页或首页，确认 popup 不继承前一个页面的设置。
 - 错误暴露：当 ChatGPT 页面出现生成错误时，确认弹窗和页面提示条能显示问题。
 
 ## 开发

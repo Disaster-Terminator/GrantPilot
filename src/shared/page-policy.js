@@ -69,3 +69,12 @@ export function shouldRefreshNow(input) {
 
   return { refresh: true, reason: input.pageStatus || "idle" };
 }
+
+export function getChatGptPageKey(urlValue) {
+  const page = classifyChatGptPage(urlValue);
+  if (!page.supported) {
+    return null;
+  }
+  const url = new URL(urlValue);
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}

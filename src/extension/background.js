@@ -9,6 +9,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const MAX_EVENTS = 200;
+const REFRESH_INTERVALS = [10000, 20000, 30000];
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureSettings();
@@ -16,6 +17,16 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   void ensureSettings();
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || changeInfo.status === "complete") {
+    void syncTabBadge(tabId, tab);
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void removeTabSettings(tabId);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -34,6 +45,8 @@ async function handleMessage(message, sender) {
   switch (message?.type) {
     case "GRANTPILOT_GET_MODEL":
       return getPopupModel();
+    case "GRANTPILOT_GET_CONTENT_SETTINGS":
+      return getSettingsForSender(sender);
     case "GRANTPILOT_UPDATE_SETTINGS":
       return updateSettings(message.patch || {});
     case "GRANTPILOT_EVENT":
@@ -44,31 +57,57 @@ async function handleMessage(message, sender) {
 }
 
 async function ensureSettings() {
-  const stored = await chrome.storage.local.get(["settings", "events"]);
-  if (!stored.settings) {
-    await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
+  const stored = await chrome.storage.local.get(["tabSettings", "events"]);
+  if (!stored.tabSettings) {
+    await chrome.storage.local.set({ tabSettings: {} });
   }
   if (!stored.events) {
     await chrome.storage.local.set({ events: [] });
   }
 }
 
-async function readSettings() {
+async function readTabSettings(tab) {
   await ensureSettings();
-  const stored = await chrome.storage.local.get("settings");
+  const tabId = tab?.id;
+  const pageKey = getPageKey(tab?.url);
+  if (!Number.isInteger(tabId) || !pageKey) {
+    return { settings: DEFAULT_SETTINGS, pageKey: null, tabId: null };
+  }
+
+  const { tabSettings = {} } = await chrome.storage.local.get("tabSettings");
+  const stored = tabSettings[String(tabId)];
+  if (!stored || stored.pageKey !== pageKey) {
+    return { settings: DEFAULT_SETTINGS, pageKey, tabId };
+  }
+
   return {
-    ...DEFAULT_SETTINGS,
-    ...(stored.settings || {})
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...(stored.settings || {})
+    },
+    pageKey,
+    tabId
   };
 }
 
 async function updateSettings(patch) {
+  const tab = await getActiveTab();
+  const current = await readTabSettings(tab);
+  if (!current.tabId || !current.pageKey) {
+    throw new Error("active_tab_not_supported");
+  }
   const next = {
-    ...(await readSettings()),
+    ...current.settings,
     ...sanitizeSettingsPatch(patch)
   };
-  await chrome.storage.local.set({ settings: next });
-  await updateBadge(next);
+  const { tabSettings = {} } = await chrome.storage.local.get("tabSettings");
+  tabSettings[String(current.tabId)] = {
+    pageKey: current.pageKey,
+    settings: next,
+    updatedAt: new Date().toISOString()
+  };
+  await chrome.storage.local.set({ tabSettings });
+  await updateBadge(next, null, current.tabId);
   return next;
 }
 
@@ -77,7 +116,7 @@ function sanitizeSettingsPatch(patch) {
   if (typeof patch.enabled === "boolean") sanitized.enabled = patch.enabled;
   if (typeof patch.autoRefresh === "boolean") sanitized.autoRefresh = patch.autoRefresh;
   if (typeof patch.logToLocalServer === "boolean") sanitized.logToLocalServer = patch.logToLocalServer;
-  if (typeof patch.refreshIntervalMs === "number" && [10000, 20000, 30000].includes(patch.refreshIntervalMs)) {
+  if (typeof patch.refreshIntervalMs === "number" && REFRESH_INTERVALS.includes(patch.refreshIntervalMs)) {
     sanitized.refreshIntervalMs = patch.refreshIntervalMs;
   }
   if (typeof patch.scanIntervalMs === "number") {
@@ -91,19 +130,36 @@ function sanitizeSettingsPatch(patch) {
 
 async function getPopupModel() {
   const { events = [] } = await chrome.storage.local.get("events");
-  const settings = await readSettings();
+  const tab = await getActiveTab();
+  const current = await readTabSettings(tab);
   const lastIssue = [...events].reverse().find((event) =>
     event.kind === "chatgpt_error" || event.kind === "stuck_generation" || event.kind === "runtime_error"
   ) || null;
   return {
-    settings,
+    settings: current.settings,
+    currentTab: {
+      id: current.tabId,
+      url: tab?.url ?? null,
+      pageKey: current.pageKey,
+      supported: Boolean(current.pageKey)
+    },
     events,
     lastIssue
   };
 }
 
+async function getSettingsForSender(sender) {
+  const current = await readTabSettings(sender?.tab);
+  return {
+    settings: current.settings,
+    pageKey: current.pageKey,
+    tabId: current.tabId
+  };
+}
+
 async function recordEvent(event, sender) {
-  const settings = await readSettings();
+  const current = await readTabSettings(sender?.tab);
+  const settings = current.settings;
   const entry = {
     ...event,
     at: new Date().toISOString(),
@@ -113,7 +169,7 @@ async function recordEvent(event, sender) {
   const { events = [] } = await chrome.storage.local.get("events");
   const nextEvents = [...events, entry].slice(-MAX_EVENTS);
   await chrome.storage.local.set({ events: nextEvents });
-  await updateBadge(settings, entry);
+  await updateBadge(settings, entry, sender?.tab?.id);
 
   if (settings.logToLocalServer) {
     void fetch(settings.debugServerUrl, {
@@ -126,17 +182,57 @@ async function recordEvent(event, sender) {
   return entry;
 }
 
-async function updateBadge(settings, latestEvent = null) {
+async function syncTabBadge(tabId, tab) {
+  const current = await readTabSettings({ id: tabId, url: tab?.url });
+  if (!current.pageKey) {
+    await chrome.action.setBadgeText({ tabId, text: "" });
+    return;
+  }
+  await updateBadge(current.settings, null, tabId);
+}
+
+async function removeTabSettings(tabId) {
+  const { tabSettings = {} } = await chrome.storage.local.get("tabSettings");
+  if (tabSettings[String(tabId)]) {
+    delete tabSettings[String(tabId)];
+    await chrome.storage.local.set({ tabSettings });
+  }
+}
+
+async function updateBadge(settings, latestEvent = null, tabId = null) {
+  const target = Number.isInteger(tabId) ? { tabId } : {};
   if (latestEvent?.kind === "chatgpt_error" || latestEvent?.kind === "stuck_generation") {
-    await chrome.action.setBadgeText({ text: "!" });
-    await chrome.action.setBadgeBackgroundColor({ color: "#b42318" });
+    await chrome.action.setBadgeText({ ...target, text: "!" });
+    await chrome.action.setBadgeBackgroundColor({ ...target, color: "#b42318" });
     return;
   }
 
-  await chrome.action.setBadgeText({ text: settings.enabled ? "ON" : "" });
+  await chrome.action.setBadgeText({ ...target, text: settings.enabled ? "ON" : "" });
   if (settings.enabled) {
-    await chrome.action.setBadgeBackgroundColor({ color: "#1677ff" });
+    await chrome.action.setBadgeBackgroundColor({ ...target, color: "#1677ff" });
   }
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab ?? null;
+}
+
+function getPageKey(urlValue) {
+  let url;
+  try {
+    url = new URL(urlValue);
+  } catch {
+    return null;
+  }
+  if (url.hostname !== "chatgpt.com" && url.hostname !== "chat.openai.com") {
+    return null;
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  if (/^\/c\/[^/]+$/.test(path) || /^\/g\/[^/]+\/c\/[^/]+$/.test(path)) {
+    return `${url.origin}${path}`;
+  }
+  return null;
 }
 
 function clamp(value, min, max) {

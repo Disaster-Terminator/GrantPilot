@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   classifyChatGptPage,
   computeJitteredRefreshIntervalMs,
+  getChatGptPageKey,
   normalizeRefreshIntervalMs,
   shouldRefreshNow
 } from "../src/shared/page-policy.js";
@@ -20,6 +21,18 @@ test("classifyChatGptPage allows only concrete ChatGPT conversation pages", () =
   assert.equal(classifyChatGptPage("https://chatgpt.com/").supported, false);
   assert.equal(classifyChatGptPage("https://chatgpt.com/g/project-1").supported, false);
   assert.equal(classifyChatGptPage("https://auth.openai.com/u/login").supported, false);
+});
+
+test("getChatGptPageKey isolates settings by concrete conversation URL", () => {
+  assert.equal(getChatGptPageKey("https://chatgpt.com/"), null);
+  assert.equal(
+    getChatGptPageKey("https://chatgpt.com/c/abc-123/"),
+    "https://chatgpt.com/c/abc-123"
+  );
+  assert.equal(
+    getChatGptPageKey("https://chatgpt.com/g/project-1/c/abc-123"),
+    "https://chatgpt.com/g/project-1/c/abc-123"
+  );
 });
 
 test("normalizeRefreshIntervalMs accepts only simple fixed choices", () => {
@@ -120,4 +133,20 @@ test("shouldRefreshNow does not refresh during active generation, errors, or app
     assert.equal(decision.refresh, false);
     assert.equal(decision.reason, blocked.reason);
   }
+});
+
+test("shouldRefreshNow does not refresh after normal generation has already disarmed recovery", () => {
+  const decision = shouldRefreshNow({
+    enabled: true,
+    autoRefresh: true,
+    url: "https://chatgpt.com/c/abc",
+    pageStatus: "idle",
+    hasApprovalTarget: false,
+    refreshArmed: false,
+    nextRefreshAt: 10000,
+    now: 30000
+  });
+
+  assert.equal(decision.refresh, false);
+  assert.equal(decision.reason, "not_armed");
 });

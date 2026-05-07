@@ -1,5 +1,6 @@
 const elements = {
   status: document.querySelector("#status"),
+  scope: document.querySelector("#scope"),
   enabled: document.querySelector("#enabled"),
   autoRefresh: document.querySelector("#autoRefresh"),
   refreshIntervalMs: document.querySelector("#refreshIntervalMs"),
@@ -61,10 +62,16 @@ function render(nextModel) {
   const settings = nextModel.settings;
   elements.status.textContent = settings.enabled ? "Enabled" : "Disabled";
   elements.status.classList.toggle("enabled", settings.enabled);
+  elements.scope.textContent = nextModel.currentTab?.supported
+    ? "Settings apply only to this current conversation tab."
+    : "Open a ChatGPT conversation page to enable GrantPilot for that tab.";
   elements.enabled.checked = settings.enabled;
   elements.autoRefresh.checked = settings.autoRefresh;
   elements.refreshIntervalMs.value = String(settings.refreshIntervalMs || 20000);
   elements.logToLocalServer.checked = settings.logToLocalServer;
+  elements.enabled.disabled = !nextModel.currentTab?.supported;
+  elements.autoRefresh.disabled = !nextModel.currentTab?.supported;
+  elements.refreshIntervalMs.disabled = !nextModel.currentTab?.supported;
 
   if (nextModel.lastIssue) {
     const detail = nextModel.lastIssue.detail || {};

@@ -58,24 +58,29 @@
   let generationStartedAt = null;
   let lastIssueKey = null;
   let lastUrl = location.href;
-  let lastConversationSignature = null;
+  let previousPageStatus = "idle";
 
   void start();
 
   async function start() {
     settings = await readSettings();
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === "local" && changes.settings?.newValue) {
-        settings = { ...DEFAULT_SETTINGS, ...changes.settings.newValue };
-        schedule();
+      if (area === "local" && changes.tabSettings) {
+        void readSettings().then((nextSettings) => {
+          settings = nextSettings;
+          schedule();
+        });
       }
     });
     schedule();
   }
 
   async function readSettings() {
-    const stored = await chrome.storage.local.get("settings");
-    return { ...DEFAULT_SETTINGS, ...(stored.settings || {}) };
+    const response = await chrome.runtime.sendMessage({ type: "GRANTPILOT_GET_CONTENT_SETTINGS" });
+    if (!response?.ok) {
+      return DEFAULT_SETTINGS;
+    }
+    return { ...DEFAULT_SETTINGS, ...(response.result?.settings || {}) };
   }
 
   function schedule() {
@@ -114,6 +119,7 @@
 
     try {
       syncUrlState();
+      settings = await readSettings();
       if (!classifyChatGptPage(location.href).supported) {
         hideIssue();
         return;
@@ -122,6 +128,10 @@
       const target = findApprovalTarget();
       const pageState = classifyPageState();
       const activity = detectConversationActivity(Boolean(target), pageState);
+      if (previousPageStatus === "generating" && pageState.status === "idle") {
+        disarmRefresh("generation_settled");
+      }
+      previousPageStatus = pageState.status;
 
       if (pageState.status === "chatgpt_error" || pageState.status === "stuck_generation") {
         showIssue(pageState.reason);
@@ -389,7 +399,7 @@
     currentRefreshDelayMs = null;
     generationStartedAt = null;
     lastIssueKey = null;
-    lastConversationSignature = null;
+    previousPageStatus = "idle";
   }
 
   function detectConversationActivity(hasApprovalTarget, pageState) {
@@ -399,32 +409,17 @@
     if (pageState.status === "generating") {
       return { active: true, reason: "generation_in_progress" };
     }
-    const signature = readConversationSignature();
-    if (lastConversationSignature === null) {
-      lastConversationSignature = signature;
-      return { active: false, reason: "baseline" };
-    }
-    if (signature && signature !== lastConversationSignature) {
-      lastConversationSignature = signature;
-      return { active: true, reason: "conversation_changed" };
-    }
     return { active: false, reason: "unchanged" };
   }
 
-  function readConversationSignature() {
-    const turns = Array.from(document.querySelectorAll('[data-message-author-role="user"],[data-message-author-role="assistant"]'));
-    const latest = turns.slice(-4).map((element) => normalizeText(element.textContent || "")).join("\n---\n");
-    return hashText(latest);
-  }
-
-  function hashText(value) {
-    const text = normalizeText(value);
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-      hash ^= text.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
+  function disarmRefresh(reason) {
+    if (!refreshArmed) {
+      return;
     }
-    return `h${(hash >>> 0).toString(16)}`;
+    refreshArmed = false;
+    nextRefreshAt = null;
+    currentRefreshDelayMs = null;
+    void report("refresh_disarmed", { reason });
   }
 
   function showIssue(message) {
