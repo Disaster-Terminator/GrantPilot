@@ -2,11 +2,14 @@
   const DEFAULT_SETTINGS = {
     enabled: false,
     autoRefresh: false,
+    refreshIntervalMs: 20000,
     scanIntervalMs: 1000,
     stuckThresholdMs: 120000
   };
 
-  const REFRESH_INTERVAL_SEQUENCE_MS = [10000, 15000, 30000, 60000, 120000, 300000];
+  const REFRESH_INTERVAL_OPTIONS_MS = [10000, 20000, 30000];
+  const JITTER_MIN_RATIO = 0.85;
+  const JITTER_MAX_RATIO = 1.2;
   const POSITIVE = ["\u786e\u8ba4", "\u5141\u8bb8", "\u6279\u51c6", "\u7ee7\u7eed", "Confirm", "Allow", "Approve", "Continue"];
   const NEGATIVE = ["\u62d2\u7edd", "\u53d6\u6d88", "Deny", "Reject", "Cancel"];
   const CONTEXT = [
@@ -49,14 +52,13 @@
   let scanTimer = null;
   let observer = null;
   let lastClickedAt = 0;
-  let lastActivityAt = Date.now();
-  let refreshCount = readRefreshCount();
+  let refreshArmed = false;
+  let nextRefreshAt = null;
+  let currentRefreshDelayMs = null;
   let generationStartedAt = null;
   let lastIssueKey = null;
   let lastUrl = location.href;
-
-  window.addEventListener("pointerdown", () => markActivity(), { passive: true, capture: true });
-  window.addEventListener("keydown", () => markActivity(), { passive: true, capture: true });
+  let lastConversationSignature = null;
 
   void start();
 
@@ -119,6 +121,7 @@
 
       const target = findApprovalTarget();
       const pageState = classifyPageState();
+      const activity = detectConversationActivity(Boolean(target), pageState);
 
       if (pageState.status === "chatgpt_error" || pageState.status === "stuck_generation") {
         showIssue(pageState.reason);
@@ -131,7 +134,7 @@
         const now = Date.now();
         if (now - lastClickedAt > 1500) {
           lastClickedAt = now;
-          markActivity();
+          armRefresh("approval_clicked");
           target.button.click();
           await report("approval_clicked", {
             source,
@@ -140,6 +143,10 @@
           });
         }
         return;
+      }
+
+      if (activity.active) {
+        armRefresh(activity.reason);
       }
 
       maybeAutoRefresh(pageState, Boolean(target));
@@ -241,7 +248,6 @@
     }
 
     generationStartedAt ??= Date.now();
-    markActivity(false);
     if (Date.now() - generationStartedAt >= settings.stuckThresholdMs) {
       return {
         status: "stuck_generation",
@@ -259,21 +265,22 @@
       url: location.href,
       pageStatus: pageState.status,
       hasApprovalTarget,
-      refreshCount,
+      refreshArmed,
+      nextRefreshAt,
       now: Date.now(),
-      lastActivityAt
     });
 
     if (!decision.refresh) {
       return;
     }
 
-    refreshCount += 1;
-    writeRefreshCount(refreshCount);
+    refreshArmed = false;
+    const usedDelayMs = currentRefreshDelayMs;
     void report("page_refresh", {
       reason: decision.reason,
-      intervalMs: decision.intervalMs,
-      refreshCount
+      baseIntervalMs: normalizeRefreshIntervalMs(settings.refreshIntervalMs),
+      jitteredDelayMs: usedDelayMs,
+      nextRefreshAt
     });
     window.location.reload();
   }
@@ -302,6 +309,10 @@
       return { refresh: false, reason: page.reason };
     }
 
+    if (!input.refreshArmed) {
+      return { refresh: false, reason: "not_armed" };
+    }
+
     if (input.hasApprovalTarget) {
       return { refresh: false, reason: "approval_target_present" };
     }
@@ -310,13 +321,16 @@
       return { refresh: false, reason: input.pageStatus };
     }
 
-    const intervalMs = getRefreshIntervalMs(input.refreshCount);
-    const elapsedMs = Math.max(0, Number(input.now) - Number(input.lastActivityAt));
-    if (elapsedMs < intervalMs) {
-      return { refresh: false, reason: "waiting", intervalMs };
+    const deadline = Number(input.nextRefreshAt);
+    if (!Number.isFinite(deadline)) {
+      return { refresh: false, reason: "no_refresh_deadline" };
     }
 
-    return { refresh: true, reason: input.pageStatus || "idle", intervalMs };
+    if (Number(input.now) < deadline) {
+      return { refresh: false, reason: "waiting", remainingMs: deadline - Number(input.now) };
+    }
+
+    return { refresh: true, reason: input.pageStatus || "idle" };
   }
 
   function classifyChatGptPage(urlValue) {
@@ -339,17 +353,30 @@
     return { supported: false, reason: "not_conversation_page" };
   }
 
-  function getRefreshIntervalMs(count) {
-    const index = Math.max(0, Math.min(Number(count) || 0, REFRESH_INTERVAL_SEQUENCE_MS.length - 1));
-    return REFRESH_INTERVAL_SEQUENCE_MS[index];
+  function normalizeRefreshIntervalMs(value) {
+    const interval = Number(value);
+    return REFRESH_INTERVAL_OPTIONS_MS.includes(interval) ? interval : 20000;
   }
 
-  function markActivity(resetBackoff = true) {
-    lastActivityAt = Date.now();
-    if (resetBackoff) {
-      refreshCount = 0;
-      writeRefreshCount(refreshCount);
+  function computeJitteredRefreshIntervalMs(baseIntervalMs) {
+    const base = normalizeRefreshIntervalMs(baseIntervalMs);
+    const ratio = JITTER_MIN_RATIO + (JITTER_MAX_RATIO - JITTER_MIN_RATIO) * Math.random();
+    return Math.round(base * ratio);
+  }
+
+  function armRefresh(reason) {
+    if (!settings.autoRefresh || refreshArmed) {
+      return;
     }
+    currentRefreshDelayMs = computeJitteredRefreshIntervalMs(settings.refreshIntervalMs);
+    nextRefreshAt = Date.now() + currentRefreshDelayMs;
+    refreshArmed = true;
+    void report("refresh_armed", {
+      reason,
+      baseIntervalMs: normalizeRefreshIntervalMs(settings.refreshIntervalMs),
+      jitteredDelayMs: currentRefreshDelayMs,
+      nextRefreshAt
+    });
   }
 
   function syncUrlState() {
@@ -357,22 +384,47 @@
       return;
     }
     lastUrl = location.href;
-    lastActivityAt = Date.now();
-    refreshCount = readRefreshCount();
+    refreshArmed = false;
+    nextRefreshAt = null;
+    currentRefreshDelayMs = null;
     generationStartedAt = null;
     lastIssueKey = null;
+    lastConversationSignature = null;
   }
 
-  function readRefreshCount() {
-    return Number(sessionStorage.getItem(refreshCountKey()) || "0") || 0;
+  function detectConversationActivity(hasApprovalTarget, pageState) {
+    if (hasApprovalTarget) {
+      return { active: true, reason: "approval_target_present" };
+    }
+    if (pageState.status === "generating") {
+      return { active: true, reason: "generation_in_progress" };
+    }
+    const signature = readConversationSignature();
+    if (lastConversationSignature === null) {
+      lastConversationSignature = signature;
+      return { active: false, reason: "baseline" };
+    }
+    if (signature && signature !== lastConversationSignature) {
+      lastConversationSignature = signature;
+      return { active: true, reason: "conversation_changed" };
+    }
+    return { active: false, reason: "unchanged" };
   }
 
-  function writeRefreshCount(value) {
-    sessionStorage.setItem(refreshCountKey(), String(value));
+  function readConversationSignature() {
+    const turns = Array.from(document.querySelectorAll('[data-message-author-role="user"],[data-message-author-role="assistant"]'));
+    const latest = turns.slice(-4).map((element) => normalizeText(element.textContent || "")).join("\n---\n");
+    return hashText(latest);
   }
 
-  function refreshCountKey() {
-    return `grantpilot.refreshCount:${location.origin}${location.pathname}`;
+  function hashText(value) {
+    const text = normalizeText(value);
+    let hash = 2166136261;
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `h${(hash >>> 0).toString(16)}`;
   }
 
   function showIssue(message) {

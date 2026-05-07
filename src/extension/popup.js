@@ -2,6 +2,7 @@ const elements = {
   status: document.querySelector("#status"),
   enabled: document.querySelector("#enabled"),
   autoRefresh: document.querySelector("#autoRefresh"),
+  refreshIntervalMs: document.querySelector("#refreshIntervalMs"),
   logToLocalServer: document.querySelector("#logToLocalServer"),
   lastIssue: document.querySelector("#lastIssue"),
   events: document.querySelector("#events")
@@ -20,6 +21,10 @@ elements.enabled.addEventListener("change", () => {
 
 elements.autoRefresh.addEventListener("change", () => {
   void updateSettings({ autoRefresh: elements.autoRefresh.checked });
+});
+
+elements.refreshIntervalMs.addEventListener("change", () => {
+  void updateSettings({ refreshIntervalMs: Number(elements.refreshIntervalMs.value) });
 });
 
 elements.logToLocalServer.addEventListener("change", () => {
@@ -58,6 +63,7 @@ function render(nextModel) {
   elements.status.classList.toggle("enabled", settings.enabled);
   elements.enabled.checked = settings.enabled;
   elements.autoRefresh.checked = settings.autoRefresh;
+  elements.refreshIntervalMs.value = String(settings.refreshIntervalMs || 20000);
   elements.logToLocalServer.checked = settings.logToLocalServer;
 
   if (nextModel.lastIssue) {

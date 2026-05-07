@@ -36,7 +36,11 @@ GrantPilot 不是通用 auto-clicker。
 - 点击前要求按钮附近存在工具、应用、连接器、MCP 或 ChatGPT app response 相关上下文。
 - ChatGPT 页面出现可见错误时，会同步显示到扩展弹窗和页面右下角提示条。
 - 可选自动刷新只作用于会话页，并且只在没有授权卡片、没有 ChatGPT 可见错误、没有生成中控制按钮时触发。
-- 自动刷新按会话退避：10s、15s、30s、1m、2m、5m。
+- 自动刷新使用用户选择的固定基础间隔，并加入随机抖动，避免机械固定节奏：
+  - Fast：约 10s
+  - Normal：约 20s
+  - Relaxed：约 30s
+- 自动刷新只会在观察到会话活动后 armed；单纯打开一个静止会话页不会启动刷新。
 
 ## 本地安装
 
@@ -50,7 +54,7 @@ GrantPilot 不是通用 auto-clicker。
 
 - **Enabled**：开启或关闭授权卡片扫描。
 - **Auto refresh**：在会话页空闲时按退避间隔刷新。
-- **Refresh cadence**：显示当前固定退避策略：10s、15s、30s、1m、2m、5m。
+- **Refresh cadence**：选择自动刷新基础间隔：约 10s、20s 或 30s。实际刷新会加入随机抖动。
 - **Local JSONL log**：把事件写入本地调试日志服务。
 - **Last issue / Recent events**：查看最近一次问题、点击、刷新和运行时事件。
 
@@ -83,7 +87,7 @@ ChatGPT Web 的真实页面自动化不稳定，这个仓库不把完整 e2e 自
 - 开启状态：展示类似 `Update README.md in GitHub repository?` 的卡片，确认右侧 `确认` / `Allow` 被点击。
 - 安全边界：确认左侧 `拒绝` / `Cancel` 不会被点击。
 - 页面隔离：在 `https://chatgpt.com/` 首页启用 auto-refresh，确认不会记录 `page_refresh`。
-- 自动刷新：在会话页启用 auto-refresh，确认空闲刷新按 10s、15s、30s、1m、2m、5m 退避。
+- 自动刷新：在会话页启用 auto-refresh，分别选择 10s / 20s / 30s，确认只有观察到会话活动后才 armed，并按基础间隔加随机抖动刷新。
 - 错误暴露：当 ChatGPT 页面出现生成错误时，确认弹窗和页面提示条能显示问题。
 
 ## 开发

@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   classifyChatGptPage,
-  getRefreshIntervalMs,
+  computeJitteredRefreshIntervalMs,
+  normalizeRefreshIntervalMs,
   shouldRefreshNow
 } from "../src/shared/page-policy.js";
 
@@ -21,25 +22,31 @@ test("classifyChatGptPage allows only concrete ChatGPT conversation pages", () =
   assert.equal(classifyChatGptPage("https://auth.openai.com/u/login").supported, false);
 });
 
-test("getRefreshIntervalMs uses a 10 second minimum and backs off", () => {
-  assert.equal(getRefreshIntervalMs(0), 10000);
-  assert.equal(getRefreshIntervalMs(1), 15000);
-  assert.equal(getRefreshIntervalMs(2), 30000);
-  assert.equal(getRefreshIntervalMs(3), 60000);
-  assert.equal(getRefreshIntervalMs(4), 120000);
-  assert.equal(getRefreshIntervalMs(99), 300000);
+test("normalizeRefreshIntervalMs accepts only simple fixed choices", () => {
+  assert.equal(normalizeRefreshIntervalMs(10000), 10000);
+  assert.equal(normalizeRefreshIntervalMs(20000), 20000);
+  assert.equal(normalizeRefreshIntervalMs(30000), 30000);
+  assert.equal(normalizeRefreshIntervalMs(60000), 20000);
+  assert.equal(normalizeRefreshIntervalMs("bad"), 20000);
 });
 
-test("shouldRefreshNow blocks homepage refresh even when auto refresh is enabled", () => {
+test("computeJitteredRefreshIntervalMs keeps the minimum option near 10 seconds", () => {
+  assert.equal(computeJitteredRefreshIntervalMs(10000, 0), 8500);
+  assert.equal(computeJitteredRefreshIntervalMs(10000, 1), 12000);
+  assert.equal(computeJitteredRefreshIntervalMs(20000, 0.5), 20500);
+  assert.equal(computeJitteredRefreshIntervalMs(30000, 1), 36000);
+});
+
+test("shouldRefreshNow blocks homepage refresh even when auto refresh is enabled and armed", () => {
   const decision = shouldRefreshNow({
     enabled: true,
     autoRefresh: true,
     url: "https://chatgpt.com/",
     pageStatus: "idle",
     hasApprovalTarget: false,
-    refreshCount: 0,
-    now: 20000,
-    lastActivityAt: 0
+    refreshArmed: true,
+    nextRefreshAt: 10000,
+    now: 20000
   });
 
   assert.deepEqual(decision, {
@@ -48,16 +55,34 @@ test("shouldRefreshNow blocks homepage refresh even when auto refresh is enabled
   });
 });
 
-test("shouldRefreshNow waits for the current distributed interval", () => {
+test("shouldRefreshNow does not refresh a passive conversation page before activity arms it", () => {
+  const decision = shouldRefreshNow({
+    enabled: true,
+    autoRefresh: true,
+    url: "https://chatgpt.com/c/abc",
+    pageStatus: "idle",
+    hasApprovalTarget: false,
+    refreshArmed: false,
+    nextRefreshAt: 0,
+    now: 30000
+  });
+
+  assert.deepEqual(decision, {
+    refresh: false,
+    reason: "not_armed"
+  });
+});
+
+test("shouldRefreshNow waits until the armed randomized deadline", () => {
   assert.equal(shouldRefreshNow({
     enabled: true,
     autoRefresh: true,
     url: "https://chatgpt.com/c/abc",
     pageStatus: "idle",
     hasApprovalTarget: false,
-    refreshCount: 0,
-    now: 9999,
-    lastActivityAt: 0
+    refreshArmed: true,
+    nextRefreshAt: 12000,
+    now: 11999
   }).refresh, false);
 
   assert.deepEqual(shouldRefreshNow({
@@ -66,13 +91,12 @@ test("shouldRefreshNow waits for the current distributed interval", () => {
     url: "https://chatgpt.com/c/abc",
     pageStatus: "idle",
     hasApprovalTarget: false,
-    refreshCount: 0,
-    now: 10000,
-    lastActivityAt: 0
+    refreshArmed: true,
+    nextRefreshAt: 12000,
+    now: 12000
   }), {
     refresh: true,
-    reason: "idle",
-    intervalMs: 10000
+    reason: "idle"
   });
 });
 
@@ -88,9 +112,9 @@ test("shouldRefreshNow does not refresh during active generation, errors, or app
       url: "https://chatgpt.com/c/abc",
       pageStatus: blocked.pageStatus,
       hasApprovalTarget: blocked.hasApprovalTarget,
-      refreshCount: 0,
-      now: 30000,
-      lastActivityAt: 0
+      refreshArmed: true,
+      nextRefreshAt: 0,
+      now: 30000
     });
 
     assert.equal(decision.refresh, false);

@@ -16,7 +16,7 @@
       <label class="row">
         <span>
           <strong>Enabled</strong>
-          <small>只在 ChatGPT 页面点击确认卡片</small>
+          <small>Only clicks approval cards on ChatGPT conversations</small>
         </span>
         <input id="enabled" type="checkbox">
       </label>
@@ -24,20 +24,27 @@
       <label class="row">
         <span>
           <strong>Auto refresh</strong>
-          <small>空闲时按间隔刷新页面</small>
+          <small>Reloads idle conversation pages by cadence</small>
         </span>
         <input id="autoRefresh" type="checkbox">
       </label>
 
-      <section class="panel">
-        <h2>Refresh cadence</h2>
-        <p class="hint">Conversation pages only. Backoff: 10s, 15s, 30s, 1m, 2m, 5m.</p>
-      </section>
+      <label class="field">
+        <span>
+          <strong>Refresh cadence</strong>
+          <small>Only after conversation activity. Uses random jitter.</small>
+        </span>
+        <select id="refreshIntervalMs">
+          <option value="10000">Fast: about 10s</option>
+          <option value="20000">Normal: about 20s</option>
+          <option value="30000">Relaxed: about 30s</option>
+        </select>
+      </label>
 
       <label class="row">
         <span>
           <strong>Local JSONL log</strong>
-          <small>需要先运行 debug log server</small>
+          <small>Requires the debug log server</small>
         </span>
         <input id="logToLocalServer" type="checkbox">
       </label>
