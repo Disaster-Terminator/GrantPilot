@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
 
 const MAX_EVENTS = 200;
 const REFRESH_INTERVALS = [10000, 20000, 30000];
+const REFRESH_ALARM_PREFIX = "grantpilot-refresh:";
 
 chrome.runtime.onInstalled.addListener(() => {
   void ensureSettings();
@@ -27,6 +28,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void removeTabSettings(tabId);
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name.startsWith(REFRESH_ALARM_PREFIX)) {
+    void handleRefreshAlarm(alarm.name);
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -107,6 +114,9 @@ async function updateSettings(patch) {
     updatedAt: new Date().toISOString()
   };
   await chrome.storage.local.set({ tabSettings });
+  if (!next.enabled || !next.autoRefresh) {
+    await clearRefreshAlarm(current.tabId);
+  }
   await updateBadge(next, null, current.tabId);
   return next;
 }
@@ -169,6 +179,7 @@ async function recordEvent(event, sender) {
   const { events = [] } = await chrome.storage.local.get("events");
   const nextEvents = [...events, entry].slice(-MAX_EVENTS);
   await chrome.storage.local.set({ events: nextEvents });
+  await syncRefreshAlarmFromEvent(entry, current, settings);
   await updateBadge(settings, entry, sender?.tab?.id);
 
   if (settings.logToLocalServer) {
@@ -179,6 +190,106 @@ async function recordEvent(event, sender) {
     }).catch(() => undefined);
   }
 
+  return entry;
+}
+
+async function syncRefreshAlarmFromEvent(entry, current, settings) {
+  const tabId = entry.tabId;
+  if (!Number.isInteger(tabId) || !current.pageKey) {
+    return;
+  }
+
+  if (entry.kind === "refresh_armed") {
+    if (!settings.enabled || !settings.autoRefresh) {
+      await clearRefreshAlarm(tabId);
+      return;
+    }
+    const nextRefreshAt = Number(entry.detail?.nextRefreshAt);
+    if (!Number.isFinite(nextRefreshAt)) {
+      await clearRefreshAlarm(tabId);
+      return;
+    }
+    const { refreshAlarms = {} } = await chrome.storage.local.get("refreshAlarms");
+    refreshAlarms[String(tabId)] = {
+      tabId,
+      pageKey: current.pageKey,
+      reason: entry.detail?.reason || "unknown",
+      baseIntervalMs: entry.detail?.baseIntervalMs ?? null,
+      jitteredDelayMs: entry.detail?.jitteredDelayMs ?? null,
+      nextRefreshAt,
+      armedAt: entry.at
+    };
+    await chrome.storage.local.set({ refreshAlarms });
+    await chrome.alarms.create(getRefreshAlarmName(tabId), { when: nextRefreshAt });
+    return;
+  }
+
+  if (entry.kind === "refresh_disarmed" || entry.kind === "page_refresh") {
+    await clearRefreshAlarm(tabId);
+  }
+}
+
+async function handleRefreshAlarm(alarmName) {
+  const tabId = parseRefreshAlarmName(alarmName);
+  if (!Number.isInteger(tabId)) {
+    return;
+  }
+
+  const { refreshAlarms = {} } = await chrome.storage.local.get("refreshAlarms");
+  const armed = refreshAlarms[String(tabId)];
+  if (!armed) {
+    return;
+  }
+
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  const current = await readTabSettings(tab);
+  const now = Date.now();
+  if (
+    !tab?.url ||
+    current.pageKey !== armed.pageKey ||
+    !current.settings.enabled ||
+    !current.settings.autoRefresh ||
+    getPageKey(tab.url) !== armed.pageKey ||
+    !Number.isFinite(Number(armed.nextRefreshAt)) ||
+    now < Number(armed.nextRefreshAt)
+  ) {
+    await clearRefreshAlarm(tabId);
+    return;
+  }
+
+  await clearRefreshAlarm(tabId);
+  await recordBackgroundEvent({
+    kind: "page_refresh",
+    detail: {
+      reason: "background_alarm",
+      armedReason: armed.reason,
+      baseIntervalMs: armed.baseIntervalMs,
+      jitteredDelayMs: armed.jitteredDelayMs,
+      nextRefreshAt: armed.nextRefreshAt
+    }
+  }, tab);
+  await chrome.tabs.reload(tabId);
+}
+
+async function recordBackgroundEvent(event, tab) {
+  const current = await readTabSettings(tab);
+  const entry = {
+    ...event,
+    at: new Date().toISOString(),
+    tabId: tab?.id ?? null,
+    url: tab?.url ?? null
+  };
+  const { events = [] } = await chrome.storage.local.get("events");
+  const nextEvents = [...events, entry].slice(-MAX_EVENTS);
+  await chrome.storage.local.set({ events: nextEvents });
+  await updateBadge(current.settings, entry, tab?.id);
+  if (current.settings.logToLocalServer) {
+    void fetch(current.settings.debugServerUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(entry)
+    }).catch(() => undefined);
+  }
   return entry;
 }
 
@@ -197,6 +308,7 @@ async function removeTabSettings(tabId) {
     delete tabSettings[String(tabId)];
     await chrome.storage.local.set({ tabSettings });
   }
+  await clearRefreshAlarm(tabId);
 }
 
 async function updateBadge(settings, latestEvent = null, tabId = null) {
@@ -233,6 +345,27 @@ function getPageKey(urlValue) {
     return `${url.origin}${path}`;
   }
   return null;
+}
+
+function getRefreshAlarmName(tabId) {
+  return `${REFRESH_ALARM_PREFIX}${tabId}`;
+}
+
+function parseRefreshAlarmName(name) {
+  if (!name.startsWith(REFRESH_ALARM_PREFIX)) {
+    return null;
+  }
+  const tabId = Number(name.slice(REFRESH_ALARM_PREFIX.length));
+  return Number.isInteger(tabId) ? tabId : null;
+}
+
+async function clearRefreshAlarm(tabId) {
+  const { refreshAlarms = {} } = await chrome.storage.local.get("refreshAlarms");
+  if (refreshAlarms[String(tabId)]) {
+    delete refreshAlarms[String(tabId)];
+    await chrome.storage.local.set({ refreshAlarms });
+  }
+  await chrome.alarms.clear(getRefreshAlarmName(tabId));
 }
 
 function clamp(value, min, max) {

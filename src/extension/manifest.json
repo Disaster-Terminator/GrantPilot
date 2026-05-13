@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Auto-confirms narrow ChatGPT app/tool approval cards when explicitly enabled.",
   "permissions": [
+    "alarms",
     "storage",
     "tabs"
   ],

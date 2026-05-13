@@ -62,6 +62,36 @@ test("findApprovalTarget rejects generic confirm buttons without tool-card conte
   assert.equal(target, null);
 });
 
+test("findApprovalTarget rejects provider names without action context", () => {
+  const target = findApprovalTarget([
+    candidate("Confirm", {
+      contextText: "GitHub appears in this normal conversation, but this is not an approval card."
+    })
+  ]);
+
+  assert.equal(target, null);
+});
+
+test("findApprovalTarget rejects dangerous approval contexts", () => {
+  const target = findApprovalTarget([
+    candidate("Confirm", {
+      contextText: "GitHub Delete workflow file? This will delete a repository file."
+    })
+  ]);
+
+  assert.equal(target, null);
+});
+
+test("findApprovalTarget accepts provider plus bounded action context", () => {
+  const target = findApprovalTarget([
+    candidate("Allow", {
+      contextText: "GitHub Update README.md in repository? This will update one file in a pull request."
+    })
+  ]);
+
+  assert.equal(target?.text, "Allow");
+});
+
 test("classifyPageState reports ChatGPT visible error text", () => {
   const state = classifyPageState({
     visibleText: "ChatGPT 也可能会犯错。Something went wrong while generating the response.",

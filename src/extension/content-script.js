@@ -15,16 +15,15 @@
   const CONTEXT = [
     "\u4f7f\u7528\u5de5\u5177\u5b58\u5728\u98ce\u9669",
     "Received app response",
-    "app response",
-    "GitHub",
-    "tool",
-    "connector",
-    "app",
     "MCP",
     "\u5de5\u5177",
     "\u8fde\u63a5\u5668",
     "\u5e94\u7528"
   ];
+  const TOOL_WORD_RE = /\b(app response|tool|connector|mcp)\b/i;
+  const PROVIDER_RE = /\b(GitHub|Gmail|Google|Drive|Calendar|Slack|Notion|Linear)\b/i;
+  const ACTION_RE = /\b(create|update|apply|label|send|post|open|run|read|write|search|repository|messages?|files?|pull request)\b/i;
+  const DANGEROUS_CONTEXT_RE = /\b(delete|remove|payment|billing|oauth|login|password|account|admin|administrator)\b/i;
   const ERRORS = [
     "Something went wrong",
     "There was an error",
@@ -59,8 +58,13 @@
   let lastIssueKey = null;
   let lastUrl = location.href;
   let previousPageStatus = "idle";
+  let scanQueued = false;
+  let scanInFlight = false;
+  let pendingScanSource = null;
 
-  void start();
+  if (!globalThis.__GRANTPILOT_TEST_MODE__) {
+    void start();
+  }
 
   async function start() {
     settings = await readSettings();
@@ -97,11 +101,11 @@
     }
 
     scanTimer = window.setInterval(() => {
-      void scan("interval");
+      requestScan("interval");
     }, settings.scanIntervalMs);
 
     observer = new MutationObserver(() => {
-      void scan("mutation");
+      requestScan("mutation");
     });
     observer.observe(document.documentElement, {
       childList: true,
@@ -109,7 +113,34 @@
       characterData: true
     });
 
-    void scan("start");
+    requestScan("start", 0);
+  }
+
+  function requestScan(source, delayMs = 150) {
+    pendingScanSource = pendingScanSource || source;
+    if (scanQueued) {
+      return;
+    }
+    scanQueued = true;
+    window.setTimeout(() => {
+      scanQueued = false;
+      const nextSource = pendingScanSource || source;
+      pendingScanSource = null;
+      void runScan(nextSource);
+    }, delayMs);
+  }
+
+  async function runScan(source) {
+    if (scanInFlight) {
+      requestScan(source);
+      return;
+    }
+    scanInFlight = true;
+    try {
+      await scan(source);
+    } finally {
+      scanInFlight = false;
+    }
   }
 
   async function scan(source) {
@@ -128,7 +159,7 @@
       const target = findApprovalTarget();
       const pageState = classifyPageState();
       const activity = detectConversationActivity(Boolean(target), pageState);
-      if (previousPageStatus === "generating" && pageState.status === "idle") {
+      if (isActiveGenerationStatus(previousPageStatus) && pageState.status === "idle") {
         disarmRefresh("generation_settled");
       }
       previousPageStatus = pageState.status;
@@ -184,11 +215,11 @@
   }
 
   function describeButton(button) {
-    const text = normalizeText([
+    const text = normalizeLabel([
       button.textContent,
       button.getAttribute("title"),
       button.getAttribute("aria-label")
-    ].filter(Boolean).join(" "));
+    ]);
     const disabled = button.disabled || button.getAttribute("aria-disabled") === "true";
     const rect = button.getBoundingClientRect();
     const visible = rect.width > 0 && rect.height > 0;
@@ -207,7 +238,17 @@
   }
 
   function hasToolContext(text) {
-    return containsAny(text, CONTEXT);
+    const context = normalizeText(text);
+    if (context.length < 30 || context.length > 2500) {
+      return false;
+    }
+    if (DANGEROUS_CONTEXT_RE.test(context)) {
+      return false;
+    }
+    if (containsAny(context, CONTEXT) || TOOL_WORD_RE.test(context)) {
+      return true;
+    }
+    return PROVIDER_RE.test(context) && ACTION_RE.test(context);
   }
 
   function findContextText(button) {
@@ -216,7 +257,7 @@
 
     for (let depth = 0; current && depth < 10; depth += 1) {
       const text = normalizeText(current.textContent || "");
-      if (text && text.length > fallback.length && text.length <= 5000) {
+      if (text && text.length > fallback.length && text.length <= 2500) {
         fallback = text;
       }
       if (hasToolContext(text)) {
@@ -247,8 +288,8 @@
     const hasStopButton = Boolean(
       document.querySelector('button[data-testid="stop-button"]') ||
       document.querySelector('button[data-testid="stop-generating-button"]') ||
+      document.querySelector('button[aria-label*="Stop generating"]') ||
       document.querySelector('button[aria-label*="Stop"]') ||
-      document.querySelector('button[aria-label*="Cancel"]') ||
       document.querySelector('button[aria-label*="\u505c\u6b62"]')
     );
 
@@ -412,6 +453,10 @@
     return { active: false, reason: "unchanged" };
   }
 
+  function isActiveGenerationStatus(status) {
+    return status === "generating" || status === "stuck_generation";
+  }
+
   function disarmRefresh(reason) {
     if (!refreshArmed) {
       return;
@@ -464,5 +509,32 @@
       text = text.split(bad).join(good);
     }
     return text;
+  }
+
+  function normalizeLabel(parts) {
+    const unique = [];
+    for (const part of parts) {
+      const text = normalizeText(part);
+      if (text && !unique.includes(text)) {
+        unique.push(text);
+      }
+    }
+    return normalizeText(unique.join(" "));
+  }
+
+  if (globalThis.__GRANTPILOT_EXPOSE_INTERNALS__) {
+    globalThis.__GrantPilotInternals = {
+      findApprovalTarget,
+      describeButton,
+      hasToolContext,
+      classifyPageState,
+      normalizeLabel,
+      normalizeText,
+      requestScan,
+      runScan,
+      setSettingsForTest(nextSettings) {
+        settings = { ...settings, ...(nextSettings || {}) };
+      }
+    };
   }
 })();

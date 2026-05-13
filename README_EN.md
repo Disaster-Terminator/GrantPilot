@@ -33,9 +33,10 @@ If a page is not a ChatGPT tool / app approval card, GrantPilot should do nothin
 - Requires you to enable it from the extension popup.
 - Looks for positive labels such as `确认`, `允许`, `批准`, `继续`, `Confirm`, `Allow`, `Approve`, and `Continue`.
 - Treats negative labels only as safety boundaries and never clicks them.
-- Requires nearby tool / app / connector context before clicking.
+- Requires nearby tool / app / connector context plus an action signal before clicking; a provider name such as `GitHub` or `Gmail` is not enough by itself.
+- Refuses dangerous contexts such as deletion, payment, OAuth, login, account, and admin flows.
 - Surfaces visible ChatGPT errors in the popup and in a small page banner.
-- Can optionally auto-refresh an idle ChatGPT page when no approval card and no generation control are visible.
+- Can optionally auto-refresh an idle ChatGPT page when no approval card and no generation control are visible, with a background alarm fallback if the page script timer is throttled or stuck.
 
 ## Install locally
 
@@ -61,7 +62,7 @@ Recent events are stored in extension local storage and shown in the popup.
 For a local JSONL log file, run:
 
 ```bash
-npm run debug:log-server
+pnpm run debug:log-server
 ```
 
 Then enable **Local JSONL log** in the popup. By default, events are posted to `http://127.0.0.1:17762/events` and appended to `tmp/grantpilot/events.jsonl`.
@@ -72,7 +73,7 @@ You can override the debug server with environment variables:
 GRANTPILOT_DEBUG_HOST=127.0.0.1 \
 GRANTPILOT_DEBUG_PORT=17762 \
 GRANTPILOT_DEBUG_LOG=tmp/grantpilot/events.jsonl \
-npm run debug:log-server
+pnpm run debug:log-server
 ```
 
 ## Manual checks
@@ -82,21 +83,26 @@ Full browser automation against ChatGPT Web is intentionally not treated as reli
 - Disabled state: show a ChatGPT app / tool approval card and confirm no click happens.
 - Enabled state: show a card such as `Update README.md in GitHub repository?` and confirm the positive `确认` / `Allow` button is clicked.
 - Safety: confirm the negative `拒绝` / `Cancel` button is never clicked.
+- Dangerous context: show deletion, payment, OAuth, account, or admin approval text and confirm no automatic click happens.
 - Error surfacing: when ChatGPT shows a generation error, confirm the popup and page banner surface it.
-- Auto-refresh: enable auto-refresh and confirm idle pages reload only after the selected interval.
+- Auto-refresh: enable auto-refresh and confirm reloads are armed only after approval clicks or active generation; if the page timer fails, logs should show `page_refresh` with `detail.reason` set to `background_alarm`.
+
+For the fuller checklist, see [docs/manual-qa.md](./docs/manual-qa.md).
 
 ## Development
 
 Install dependencies if needed, then run:
 
 ```bash
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
 
-`npm test` runs the matcher tests under `tests/*.test.mjs`.
+`pnpm test` runs matcher, page-policy, actual content-script VM, and background alarm tests under `tests/*.test.mjs`.
 
-`npm run check` performs syntax checks for the extension scripts, shared matcher code, and `manifest.json`.
+`pnpm run check` performs syntax checks for the extension scripts, shared matcher code, and `manifest.json`.
+
+If pnpm is not available, the equivalent `npm test`, `npm run check`, and `npm run debug:log-server` commands remain supported.
 
 ## Repository layout
 

@@ -24,17 +24,15 @@ const NEGATIVE_BUTTON_TEXT = [
 const TOOL_CONTEXT_TEXT = [
   "使用工具存在风险",
   "Received app response",
-  "Update README.md in Github repository",
-  "GitHub",
-  "app response",
-  "tool",
-  "connector",
-  "app",
   "MCP",
   "工具",
   "连接器",
   "应用"
 ];
+const TOOL_WORD_RE = /\b(app response|tool|connector|mcp)\b/i;
+const PROVIDER_RE = /\b(GitHub|Gmail|Google|Drive|Calendar|Slack|Notion|Linear)\b/i;
+const ACTION_RE = /\b(create|update|apply|label|send|post|open|run|read|write|search|repository|messages?|files?|pull request)\b/i;
+const DANGEROUS_CONTEXT_RE = /\b(delete|remove|payment|billing|oauth|login|password|account|admin|administrator)\b/i;
 
 const ERROR_TEXT = [
   "Something went wrong",
@@ -77,7 +75,16 @@ export function hasToolContext(candidate) {
     candidate?.contextText,
     candidate?.pathText
   ].filter(Boolean).join(" "));
-  return includesAnyText(context, TOOL_CONTEXT_TEXT);
+  if (context.length < 30 || context.length > 2500) {
+    return false;
+  }
+  if (DANGEROUS_CONTEXT_RE.test(context)) {
+    return false;
+  }
+  if (includesAnyText(context, TOOL_CONTEXT_TEXT) || TOOL_WORD_RE.test(context)) {
+    return true;
+  }
+  return PROVIDER_RE.test(context) && ACTION_RE.test(context);
 }
 
 export function findApprovalTarget(candidates) {
@@ -138,5 +145,9 @@ export const matcherConstants = {
   POSITIVE_BUTTON_TEXT,
   NEGATIVE_BUTTON_TEXT,
   TOOL_CONTEXT_TEXT,
-  ERROR_TEXT
+  ERROR_TEXT,
+  ACTION_RE,
+  DANGEROUS_CONTEXT_RE,
+  PROVIDER_RE,
+  TOOL_WORD_RE
 };

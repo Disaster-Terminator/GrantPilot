@@ -34,6 +34,8 @@ GrantPilot 不是通用 auto-clicker。
 - 识别 `确认`、`允许`、`批准`、`继续`、`Confirm`、`Allow`、`Approve`、`Continue` 等正向按钮。
 - 识别 `拒绝`、`取消`、`Deny`、`Reject`、`Cancel` 等负向按钮，但只把它们当作安全边界，永不点击。
 - 点击前要求按钮附近存在工具、应用、连接器、MCP 或 ChatGPT app response 相关上下文。
+- `GitHub`、`Gmail` 等 provider 名称不能单独触发点击；上下文还必须包含明确动作信号。
+- 删除、支付、OAuth、登录、账号、管理员等高风险上下文会直接拒绝点击。
 - ChatGPT 页面出现可见错误时，会同步显示到扩展弹窗和页面右下角提示条。
 - 可选自动刷新只作用于当前会话页，并且只作为卡死恢复机制触发。
 - 自动刷新使用用户选择的固定基础间隔，并加入随机抖动，避免机械固定节奏：
@@ -41,6 +43,7 @@ GrantPilot 不是通用 auto-clicker。
   - Normal：约 20s
   - Relaxed：约 30s
 - 自动刷新只会在点击确认或检测到生成中后 armed；正常生成结束会 disarm，单纯打开一个静止会话页不会启动刷新。
+- 页面内计时器负责常规刷新，background alarm 负责在页面脚本被节流或卡住时做兜底刷新。
 - 弹窗设置按当前 tab / 当前会话页保存，不会继承到其他 ChatGPT 页面。
 
 ## 本地安装
@@ -66,7 +69,7 @@ GrantPilot 不是通用 auto-clicker。
 如果需要写入本地 JSONL 文件，先运行：
 
 ```bash
-npm run debug:log-server
+pnpm run debug:log-server
 ```
 
 然后在弹窗里开启 **Local JSONL log**。默认情况下，事件会发送到 `http://127.0.0.1:17762/events`，并追加写入 `tmp/grantpilot/events.jsonl`。
@@ -77,7 +80,7 @@ npm run debug:log-server
 GRANTPILOT_DEBUG_HOST=127.0.0.1 \
 GRANTPILOT_DEBUG_PORT=17762 \
 GRANTPILOT_DEBUG_LOG=tmp/grantpilot/events.jsonl \
-npm run debug:log-server
+pnpm run debug:log-server
 ```
 
 ## 手动验收
@@ -87,21 +90,26 @@ ChatGPT Web 的真实页面自动化不稳定，这个仓库不把完整 e2e 自
 - 关闭状态：展示一个 ChatGPT 应用 / 工具授权卡片，确认不会自动点击。
 - 开启状态：展示类似 `Update README.md in GitHub repository?` 的卡片，确认右侧 `确认` / `Allow` 被点击。
 - 安全边界：确认左侧 `拒绝` / `Cancel` 不会被点击。
+- 危险上下文：展示删除、支付、OAuth、账号或管理员类授权文案，确认不会自动点击。
 - 页面隔离：在 `https://chatgpt.com/` 首页启用 auto-refresh，确认不会记录 `page_refresh`。
-- 自动刷新：在会话页启用 auto-refresh，分别选择 10s / 20s / 30s，确认只有确认点击或生成中才 armed；正常回复完成后不会刷新。
+- 自动刷新：在会话页启用 auto-refresh，分别选择 10s / 20s / 30s，确认只有确认点击或生成中才 armed；正常回复完成后不会刷新；页面内计时器失效时日志应出现 `page_refresh` 且 `detail.reason` 为 `background_alarm`。
 - 作用域：在一个 ChatGPT 会话页开启 GrantPilot 后，切到另一个会话页或首页，确认 popup 不继承前一个页面的设置。
 - 错误暴露：当 ChatGPT 页面出现生成错误时，确认弹窗和页面提示条能显示问题。
+
+更完整的验收清单见 [docs/manual-qa.md](./docs/manual-qa.md)。
 
 ## 开发
 
 ```bash
-npm test
-npm run check
+pnpm test
+pnpm run check
 ```
 
-`npm test` 会运行 `tests/*.test.mjs` 下的 matcher 和页面策略测试。
+`pnpm test` 会运行 `tests/*.test.mjs` 下的 matcher、页面策略、真实 content-script VM 和 background alarm 测试。
 
-`npm run check` 会检查扩展脚本、共享逻辑和 `manifest.json` 的语法。
+`pnpm run check` 会检查扩展脚本、共享逻辑和 `manifest.json` 的语法。
+
+如果环境里没有 pnpm，等价的 `npm test`、`npm run check` 和 `npm run debug:log-server` 仍然可用。
 
 ## 仓库结构
 
