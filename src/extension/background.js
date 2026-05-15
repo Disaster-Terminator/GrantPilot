@@ -257,6 +257,21 @@ async function handleRefreshAlarm(alarmName) {
     return;
   }
 
+  const liveStatus = await getLivePageStatus(tabId);
+  if (liveStatus?.hasApprovalTarget) {
+    await rescheduleRefreshAlarm(tabId, armed, current.settings);
+    return;
+  }
+  const pageStatus = liveStatus?.pageState?.status;
+  if (pageStatus === "generating") {
+    await rescheduleRefreshAlarm(tabId, armed, current.settings);
+    return;
+  }
+  if (pageStatus === "idle" || pageStatus === "chatgpt_error") {
+    await clearRefreshAlarm(tabId);
+    return;
+  }
+
   await clearRefreshAlarm(tabId);
   await recordBackgroundEvent({
     kind: "page_refresh",
@@ -269,6 +284,31 @@ async function handleRefreshAlarm(alarmName) {
     }
   }, tab);
   await chrome.tabs.reload(tabId);
+}
+
+async function getLivePageStatus(tabId) {
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: "GRANTPILOT_GET_PAGE_STATUS" });
+    if (!response?.ok) {
+      return null;
+    }
+    return response.result || null;
+  } catch {
+    return null;
+  }
+}
+
+async function rescheduleRefreshAlarm(tabId, armed, settings) {
+  const delayMs = normalizeRefreshIntervalMs(settings.refreshIntervalMs);
+  const nextRefreshAt = Date.now() + delayMs;
+  const { refreshAlarms = {} } = await chrome.storage.local.get("refreshAlarms");
+  refreshAlarms[String(tabId)] = {
+    ...armed,
+    nextRefreshAt,
+    rescheduledAt: new Date().toISOString()
+  };
+  await chrome.storage.local.set({ refreshAlarms });
+  await chrome.alarms.create(getRefreshAlarmName(tabId), { when: nextRefreshAt });
 }
 
 async function recordBackgroundEvent(event, tab) {
@@ -345,6 +385,11 @@ function getPageKey(urlValue) {
     return `${url.origin}${path}`;
   }
   return null;
+}
+
+function normalizeRefreshIntervalMs(value) {
+  const interval = Number(value);
+  return REFRESH_INTERVALS.includes(interval) ? interval : 20000;
 }
 
 function getRefreshAlarmName(tabId) {

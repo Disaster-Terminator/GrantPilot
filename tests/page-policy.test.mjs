@@ -150,3 +150,21 @@ test("shouldRefreshNow does not refresh after normal generation has already disa
   assert.equal(decision.refresh, false);
   assert.equal(decision.reason, "not_armed");
 });
+
+test("shouldRefreshNow refreshes stuck generation even if the earlier armed deadline was lost", () => {
+  const decision = shouldRefreshNow({
+    enabled: true,
+    autoRefresh: true,
+    url: "https://chatgpt.com/c/abc",
+    pageStatus: "stuck_generation",
+    hasApprovalTarget: false,
+    refreshArmed: false,
+    nextRefreshAt: null,
+    now: 30000
+  });
+
+  assert.deepEqual(decision, {
+    refresh: true,
+    reason: "stuck_generation"
+  });
+});

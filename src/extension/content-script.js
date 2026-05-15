@@ -68,6 +68,28 @@
 
   async function start() {
     settings = await readSettings();
+    chrome.runtime.onMessage?.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== "GRANTPILOT_GET_PAGE_STATUS") {
+        return false;
+      }
+      try {
+        const target = findApprovalTarget();
+        const pageState = classifyPageState();
+        sendResponse({
+          ok: true,
+          result: {
+            hasApprovalTarget: Boolean(target),
+            pageState
+          }
+        });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return true;
+    });
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "local" && changes.tabSettings) {
         void readSettings().then((nextSettings) => {
@@ -358,6 +380,10 @@
     const page = classifyChatGptPage(input.url);
     if (!page.supported) {
       return { refresh: false, reason: page.reason };
+    }
+
+    if (input.pageStatus === "stuck_generation" && !input.hasApprovalTarget) {
+      return { refresh: true, reason: "stuck_generation" };
     }
 
     if (!input.refreshArmed) {

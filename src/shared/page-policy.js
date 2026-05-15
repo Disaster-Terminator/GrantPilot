@@ -45,6 +45,10 @@ export function shouldRefreshNow(input) {
     return { refresh: false, reason: page.reason };
   }
 
+  if (input.pageStatus === "stuck_generation" && !input.hasApprovalTarget) {
+    return { refresh: true, reason: "stuck_generation" };
+  }
+
   if (!input.refreshArmed) {
     return { refresh: false, reason: "not_armed" };
   }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
-function loadBackground(initialStorage = {}) {
+function loadBackground(initialStorage = {}, options = {}) {
   const storage = structuredClone(initialStorage);
   let messageListener = null;
   let alarmListener = null;
@@ -32,6 +32,12 @@ function loadBackground(initialStorage = {}) {
       },
       async reload(tabId) {
         reloads.push(tabId);
+      },
+      async sendMessage() {
+        if (options.liveStatus instanceof Error) {
+          throw options.liveStatus;
+        }
+        return options.liveStatus ?? null;
       }
     },
     storage: {
@@ -176,4 +182,49 @@ test("background clears fallback alarm when refresh is disarmed", async () => {
 
   assert.deepEqual([...app.alarms.keys()], []);
   assert.equal(app.storage.refreshAlarms["42"], undefined);
+});
+
+test("background reschedules instead of reloading while content script reports active generation", async () => {
+  const pageKey = "https://chatgpt.com/c/test";
+  const app = loadBackground({
+    tabSettings: {
+      "42": {
+        pageKey,
+        settings: {
+          enabled: true,
+          autoRefresh: true,
+          refreshIntervalMs: 10000
+        }
+      }
+    },
+    refreshAlarms: {
+      "42": {
+        tabId: 42,
+        pageKey,
+        reason: "generation_in_progress",
+        baseIntervalMs: 10000,
+        jitteredDelayMs: 9000,
+        nextRefreshAt: Date.now() - 1
+      }
+    },
+    events: []
+  }, {
+    liveStatus: {
+      ok: true,
+      result: {
+        hasApprovalTarget: false,
+        pageState: {
+          status: "generating",
+          reason: "generation control visible"
+        }
+      }
+    }
+  });
+
+  await app.fireAlarm("grantpilot-refresh:42");
+
+  assert.equal(app.reloads.length, 0);
+  assert.equal(app.storage.events.some((event) => event.kind === "page_refresh"), false);
+  assert.equal(app.storage.refreshAlarms["42"].reason, "generation_in_progress");
+  assert.ok(app.storage.refreshAlarms["42"].nextRefreshAt > Date.now());
 });
