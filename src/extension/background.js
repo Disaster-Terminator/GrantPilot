@@ -258,6 +258,10 @@ async function handleRefreshAlarm(alarmName) {
   }
 
   const liveStatus = await getLivePageStatus(tabId);
+  if (!liveStatus && armed.reason === "generation_in_progress") {
+    await rescheduleRefreshAlarm(tabId, armed, current.settings);
+    return;
+  }
   if (liveStatus?.hasApprovalTarget) {
     await rescheduleRefreshAlarm(tabId, armed, current.settings);
     return;

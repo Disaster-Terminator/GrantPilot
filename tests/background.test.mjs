@@ -228,3 +228,39 @@ test("background reschedules instead of reloading while content script reports a
   assert.equal(app.storage.refreshAlarms["42"].reason, "generation_in_progress");
   assert.ok(app.storage.refreshAlarms["42"].nextRefreshAt > Date.now());
 });
+
+test("background reschedules generation fallback when live page status is unavailable", async () => {
+  const pageKey = "https://chatgpt.com/c/test";
+  const app = loadBackground({
+    tabSettings: {
+      "42": {
+        pageKey,
+        settings: {
+          enabled: true,
+          autoRefresh: true,
+          refreshIntervalMs: 10000
+        }
+      }
+    },
+    refreshAlarms: {
+      "42": {
+        tabId: 42,
+        pageKey,
+        reason: "generation_in_progress",
+        baseIntervalMs: 10000,
+        jitteredDelayMs: 9000,
+        nextRefreshAt: Date.now() - 1
+      }
+    },
+    events: []
+  }, {
+    liveStatus: new Error("Receiving end does not exist")
+  });
+
+  await app.fireAlarm("grantpilot-refresh:42");
+
+  assert.equal(app.reloads.length, 0);
+  assert.equal(app.storage.events.some((event) => event.kind === "page_refresh"), false);
+  assert.equal(app.storage.refreshAlarms["42"].reason, "generation_in_progress");
+  assert.ok(app.storage.refreshAlarms["42"].nextRefreshAt > Date.now());
+});
